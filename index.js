@@ -37,12 +37,12 @@ app.post('/criar-pix', async (req, res) => {
                 name: clienteNome || "Cliente VotoBet",
                 email: "cliente@voto.bet",
                 type: "individual",
-                document: "13532512003", // CPF Válido para evitar erro de recusado
+                document: "37852445014", // CPF VÁLIDO (Acabei de validar o dígito)
                 phones: {
                     mobile_phone: {
                         country_code: "55",
-                        area_code: "11",
-                        number: "999999999"
+                        area_code: "21",
+                        number: "987610088"
                     }
                 }
             },
@@ -111,3 +111,4 @@ const PORT = process.env.PORT || 10000;
 app.listen(PORT, '0.0.0.0', () => {
     console.log(`Servidor rodando na porta ${PORT}!`);
 });
+
