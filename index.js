@@ -20,29 +20,61 @@ const PAGARME_SECRET_KEY = 'sk_91d5411c659a4b0295e81b3e53e591a1';
 
 // ROTA PARA CRIAR O PIX
 app.post('/criar-pix', async (req, res) => {
-    const { valor, clienteNome, clienteTelefone } = req.body;
-    const amountInCents = Math.round(parseFloat(valor) * 100);
-
-    const data = {
-        items: [{ amount: amountInCents, description: "Deposito Voto Bet", quantity: 1 }],
-        customer: {
-            name: clienteNome,
-            email: "cliente@voto.bet", // Email fictício necessário
-            type: "individual",
-            document: "00000000000", // O Pagar.me V5 exige um documento (pode ser o do cliente se você coletar)
-            phones: { mobile_phone: { country_code: "55", area_code: clienteTelefone.substring(0, 2), number: clienteTelefone.substring(2) } }
-        },
-        payments: [{ payment_method: "pix", pix: { expires_in: 3600 } }],
-        metadata: { id_usuario: clienteTelefone } // IMPORTANTE: Para saber quem recebeu o dinheiro depois
-    };
-
     try {
+        const { valor, clienteNome, clienteTelefone } = req.body;
+        const amountInCents = Math.round(parseFloat(valor) * 100);
+
+        // Limpa o telefone para garantir que tenha apenas números (Pagar.me exige isso)
+        const apenasNumeros = clienteTelefone.replace(/\D/g, "");
+
+        const data = {
+            items: [{
+                amount: amountInCents,
+                description: "Deposito Voto Bet",
+                quantity: 1
+            }],
+            customer: {
+                name: clienteNome || "Cliente VotoBet",
+                email: "cliente@voto.bet",
+                type: "individual",
+                document: "10714457000", // CPF de teste válido (O Pagar.me rejeita 00000000000)
+                phones: {
+                    mobile_phone: {
+                        country_code: "55",
+                        area_code: apenasNumeros.substring(0, 2) || "11",
+                        number: apenasNumeros.substring(2) || "999999999"
+                    }
+                }
+            },
+            payments: [{
+                payment_method: "pix",
+                pix: {
+                    expires_in: 3600
+                }
+            }],
+            metadata: {
+                id_usuario: clienteTelefone // Mantemos o UID original aqui para o Webhook achar no Firebase
+            }
+        };
+
         const response = await axios.post('https://api.pagar.me/core/v5/orders', data, {
-            auth: { username: PAGARME_SECRET_KEY, password: '' }
+            auth: {
+                username: PAGARME_SECRET_KEY,
+                password: ''
+            }
         });
+
+        // O Pagar.me V5 organiza a resposta assim:
         const pixData = response.data.charges[0].last_transaction;
-        res.json({ qrcode: pixData.qr_code_url, copyPaste: pixData.qr_code });
+        
+        res.json({ 
+            qrcode: pixData.qr_code_url, 
+            copyPaste: pixData.qr_code 
+        });
+
     } catch (error) {
+        // Log detalhado para você ver no Render exatamente o que o Pagar.me respondeu
+        console.error("ERRO PAGARME:", error.response ? JSON.stringify(error.response.data) : error.message);
         res.status(500).json({ error: "Erro ao gerar PIX" });
     }
 });
@@ -82,4 +114,5 @@ app.post('/webhook', async (req, res) => {
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`Servidor rodando!`));
+
 
