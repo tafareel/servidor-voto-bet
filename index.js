@@ -58,25 +58,24 @@ app.post('/criar-pix', async (req, res) => {
         };
 
         const response = await axios.post('https://api.pagar.me/core/v5/orders', data, {
-            auth: {
-                username: PAGARME_SECRET_KEY,
-                password: ''
-            }
+            auth: { username: PAGARME_SECRET_KEY, password: '' }
         });
 
-        // O Pagar.me V5 organiza a resposta assim:
-        const pixData = response.data.charges[0].last_transaction;
-        
-        res.json({ 
-            qrcode: pixData.qr_code_url, 
-            copyPaste: pixData.qr_code 
-        });
+        console.log("RESPOSTA COMPLETA DO PAGARME:", JSON.stringify(response.data));
 
-    } catch (error) {
-        // Log detalhado para você ver no Render exatamente o que o Pagar.me respondeu
-        console.error("ERRO PAGARME:", error.response ? JSON.stringify(error.response.data) : error.message);
-        res.status(500).json({ error: "Erro ao gerar PIX" });
-    }
+        // Tenta pegar o QR Code de dois caminhos diferentes (garantia)
+        const charge = response.data.charges ? response.data.charges[0] : null;
+        const transaction = charge ? charge.last_transaction : null;
+
+        if (transaction && transaction.qr_code_url) {
+            res.json({ 
+                qrcode: transaction.qr_code_url, 
+                copyPaste: transaction.qr_code 
+            });
+        } else {
+            console.error("Pagar.me não gerou transação PIX. Verifique se o PIX está ativo na sua conta.");
+            res.status(400).json({ error: "Pagar.me não devolveu o QR Code", detalhes: response.data });
+        }
 });
 
 // 2. ROTA DE WEBHOOK (Onde o saldo cai automático)
@@ -114,5 +113,6 @@ app.post('/webhook', async (req, res) => {
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`Servidor rodando!`));
+
 
 
