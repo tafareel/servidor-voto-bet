@@ -51,11 +51,15 @@ app.post('/criar-pix', async (req, res) => {
 app.post('/webhook', async (req, res) => {
     const event = req.body;
 
-    // Verifica se o pagamento foi confirmado
+    // Log para você ver no Render quando o pagamento cair
+    console.log("Evento recebido do Pagar.me:", event.type);
+
     if (event.type === 'order.paid') {
+        // No Pagar.me V5, o ID do usuário que guardamos no metadata fica aqui:
         const telefoneUsuario = event.data.metadata.id_usuario;
-        const valorPagoCentavos = event.data.amount;
-        const valorReal = valorPagoCentavos / 100;
+        
+        // O valor vem em centavos (ex: 500 = R$ 5,00)
+        const valorReal = event.data.amount / 100;
 
         try {
             const userRef = db.collection('usuarios').doc(telefoneUsuario);
@@ -66,14 +70,16 @@ app.post('/webhook', async (req, res) => {
                 await userRef.update({
                     saldo: saldoAtual + valorReal
                 });
-                console.log(`Saldo atualizado para ${telefoneUsuario}: + R$ ${valorReal}`);
+                console.log(`SUCESSO: R$ ${valorReal} adicionados ao usuário ${telefoneUsuario}`);
             }
         } catch (err) {
-            console.error("Erro ao atualizar saldo no Firebase:", err);
+            console.error("Erro ao atualizar saldo:", err);
         }
     }
+    // O Pagar.me precisa que você responda "200 OK" para ele não ficar tentando reenviar
     res.status(200).send('OK');
 });
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`Servidor rodando!`));
+
