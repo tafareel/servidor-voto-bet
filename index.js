@@ -8,21 +8,16 @@ app.use(express.json());
 app.use(cors({ origin: '*' }));
 
 // 1. CONFIGURAÇÃO DO FIREBASE
-// Certifique-se de que o arquivo firebase-adminsdk.json está na mesma pasta no GitHub
 try {
-    // Substitua o bloco de inicialização por este:
-const serviceAccount = require("./firebase-adminsdk.json");
-
-if (!admin.apps.length) {
-    admin.initializeApp({
-        credential: admin.credential.cert(serviceAccount),
-        // Adicione esta linha se o seu banco for em outra região que não os EUA
-        databaseURL: `https://${serviceAccount.project_id}.firebaseio.com` 
-    });
-}
+    const serviceAccount = require("./firebase-adminsdk.json"); 
+    if (!admin.apps.length) {
+        admin.initializeApp({
+            credential: admin.credential.cert(serviceAccount)
+        });
+        console.log("✅ Firebase autenticado com sucesso!");
     }
-} catch (e) {
-    console.error("ERRO CRÍTICO: Arquivo firebase-adminsdk.json não encontrado!");
+} catch (error) {
+    console.error("❌ ERRO CRÍTICO NAS CREDENCIAIS DO FIREBASE:", error.message);
 }
 
 const db = admin.firestore();
@@ -124,5 +119,6 @@ const PORT = process.env.PORT || 10000;
 app.listen(PORT, '0.0.0.0', () => {
     console.log(`🚀 Servidor rodando na porta ${PORT}`);
 });
+
 
 
