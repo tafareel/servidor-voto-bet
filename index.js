@@ -22,91 +22,104 @@ const PAGARME_SECRET_KEY = 'sk_91d5411c659a4b0295e81b3e53e591a1';
 // ROTA PARA CRIAR O PIX
 app.post('/criar-pix', async (req, res) => {
     try {
-        const { valor, clienteNome, clienteTelefone, clienteCPF } = req.body;
+        const { valor, clienteNome, clienteTelefone, clienteCPF, userUID } = req.body;
         const amountInCents = Math.round(parseFloat(valor) * 100);
 
-        // Limpeza de dados para o Pagar.me (Somente números)
         const cpfLimpo = clienteCPF.replace(/\D/g, "");
         const telLimpo = clienteTelefone.replace(/\D/g, "");
 
-        console.log(`Gerando PIX para: ${clienteNome} | Valor: R$ ${valor}`);
+        console.log(`Gerando PIX para: ${clienteNome} | UID: ${userUID} | Valor: R$ ${valor}`);
 
         const data = {
             items: [{
                 amount: amountInCents,
-                description: "Deposito Voto Bet",
-                quantity: 1
+                description: "Depósito Voto Bet",
+                quantity: 1,
+                code: "deposito_01"
             }],
             customer: {
-                name: clienteNome || "Cliente VotoBet",
-                email: "cliente@voto.bet",
+                name: clienteNome,
+                email: "cliente@votobet.com", // Opcional: pode vir do body também
                 type: "individual",
-                document: cpfLimpo, 
+                document: cpfLimpo,
                 phones: {
                     mobile_phone: {
                         country_code: "55",
-                        area_code: telLimpo.substring(0, 2) || "11",
-                        number: telLimpo.substring(2) || "999999999"
+                        area_code: telLimpo.substring(0, 2),
+                        number: telLimpo.substring(2)
                     }
                 }
             },
             payments: [{
                 payment_method: "pix",
-                pix: { expires_in: 3600 }
+                pix: {
+                    expires_in: 3600
+                }
             }],
-            // NA ROTA /criar-pix, altere o campo metadata:
-metadata: {
-    id_usuario: req.body.userUID // Mude de clienteTelefone para o UID real enviado pelo site
-}
+            metadata: {
+                id_usuario: userUID // CRUCIAL: Vincula o pagamento ao UID do Firebase
+            }
+        };
 
-// NA ROTA /webhook, ajuste para garantir a atualização:
+        const response = await axios.post('https://api.pagar.me/core/v5/orders', data, {
+            auth: { username: PAGARME_SECRET_KEY, password: '' }
+        });
+
+        const transaction = response.data.checkouts ? response.data.checkouts[0] : response.data.payments[0].pix;
+
+        if (transaction.qr_code_url || response.data.payments[0].pix.qr_code_url) {
+            const pixData = response.data.payments[0].pix;
+            res.json({ 
+                qrcode: pixData.qr_code_url, 
+                copyPaste: pixData.qr_code 
+            });
+        } else {
+            res.status(400).json({ error: "Pagar.me não gerou o QR Code" });
+        }
+
+    } catch (error) {
+        console.error("ERRO NO SERVIDOR:", error.response ? JSON.stringify(error.response.data) : error.message);
+        res.status(500).json({ error: "Erro interno ao processar PIX" });
+    }
+}); // <--- Chave de fecho da rota /criar-pix corrigida
+
+// 2. ROTA DE WEBHOOK (POSTBACK)
 app.post('/webhook', async (req, res) => {
     const event = req.body;
-    
-    // O Pagar.me v5 usa 'order.paid'
+    console.log("Evento recebido do Pagar.me:", event.type);
+
+    // O Pagar.me v5 envia 'order.paid' quando o Pix é confirmado
     if (event.type === 'order.paid') {
         const uidUsuario = event.data.metadata.id_usuario;
         const valorReal = event.data.amount / 100;
 
         try {
+            if (!uidUsuario) {
+                console.error("❌ Erro: Webhook recebido sem id_usuario no metadata");
+                return res.status(400).send('Metadata ausente');
+            }
+
             const userRef = db.collection('usuarios').doc(uidUsuario);
             
-            // Usamos o FieldValue para incrementar com segurança total
+            // Incrementa o saldo diretamente no Firebase (mais seguro)
             await userRef.update({
                 saldo: admin.firestore.FieldValue.increment(valorReal)
             });
+
+            console.log(`✅ SALDO ATUALIZADO: R$ ${valorReal} para o UID: ${uidUsuario}`);
+            return res.status(200).send('Saldo Creditado');
             
-            console.log(`✅ SUCESSO: R$ ${valorReal} creditados ao UID: ${uidUsuario}`);
         } catch (err) {
-            console.error("❌ Erro ao atualizar saldo no Firebase:", err);
+            console.error("❌ Erro ao atualizar Firebase no Webhook:", err);
+            return res.status(500).send('Erro interno');
         }
     }
-    res.status(200).send('OK');
+
+    // Responde 200 para qualquer outro evento para o Pagar.me não ficar reenviando
+    res.status(200).send('Evento ignorado');
 });
 
-// 2. ROTA DE WEBHOOK
-app.post('/webhook', async (req, res) => {
-    const event = req.body;
-    if (event.type === 'order.paid') {
-        const telefoneUsuario = event.data.metadata.id_usuario;
-        const valorReal = event.data.amount / 100;
-        try {
-            const userRef = db.collection('usuarios').doc(telefoneUsuario);
-            const userDoc = await userRef.get();
-            if (userDoc.exists) {
-                const saldoAtual = userDoc.data().saldo || 0;
-                await userRef.update({ saldo: saldoAtual + valorReal });
-                console.log(`SUCESSO: R$ ${valorReal} para ${telefoneUsuario}`);
-            }
-        } catch (err) {
-            console.error("Erro Webhook:", err);
-        }
-    }
-    res.status(200).send('OK');
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => {
+    console.log(`🚀 Servidor rodando na porta ${PORT}`);
 });
-
-const PORT = process.env.PORT || 10000;
-app.listen(PORT, '0.0.0.0', () => {
-    console.log(`Servidor ON na porta ${PORT}`);
-});
-
