@@ -50,7 +50,7 @@ app.post('/criar-pix', async (req, res) => {
                     mobile_phone: {
                         country_code: "55",
                         area_code: telLimpo.substring(0, 2) || "11",
-                        number: telLimpo.substring(2) || "999999999"
+                        number: telLimpo.substring(2, 11) || "999999999"
                     }
                 }
             },
@@ -59,7 +59,7 @@ app.post('/criar-pix', async (req, res) => {
                 pix: { expires_in: 3600 }
             }],
             metadata: {
-                id_usuario: userUID // Agora usamos o UID real para o saldo
+                id_usuario: userUID
             }
         };
 
@@ -67,24 +67,33 @@ app.post('/criar-pix', async (req, res) => {
             auth: { username: PAGARME_SECRET_KEY, password: '' }
         });
 
-        // Ajuste na leitura da resposta v5
-        const pixData = response.data.payments[0].pix;
+        // --- CORREÇÃO DO ERRO '0' AQUI ---
+        // Verificamos se a resposta veio no formato de 'charges' ou 'payments'
+        let pixData = null;
 
-        if (pixData && pixData.qr_code) {
+        if (response.data.charges && response.data.charges[0].last_transaction) {
+            pixData = response.data.charges[0].last_transaction;
+        } else if (response.data.payments && response.data.payments[0].pix) {
+            pixData = response.data.payments[0].pix;
+        }
+
+        if (pixData && (pixData.qr_code || pixData.qr_code_url)) {
             res.json({ 
                 qrcode: pixData.qr_code_url, 
                 copyPaste: pixData.qr_code 
             });
         } else {
-            throw new Error("Pagar.me não retornou dados do PIX");
+            console.error("Resposta inesperada do Pagar.me:", JSON.stringify(response.data));
+            throw new Error("Pagar.me não retornou os dados do PIX.");
         }
 
     } catch (error) {
-        console.error("ERRO NO SERVIDOR:", error.response ? JSON.stringify(error.response.data) : error.message);
-        res.status(500).json({ error: "Erro interno ao processar PIX" });
+        // Log detalhado para você ver no Render o que o Pagar.me rejeitou
+        const erroDetalhado = error.response ? JSON.stringify(error.response.data) : error.message;
+        console.error("ERRO NO SERVIDOR:", erroDetalhado);
+        res.status(500).json({ error: "Erro interno ao processar PIX", detalhes: erroDetalhado });
     }
 });
-
 // 2. ROTA DE WEBHOOK
 app.post('/webhook', async (req, res) => {
     const event = req.body;
@@ -110,3 +119,4 @@ const PORT = process.env.PORT || 10000;
 app.listen(PORT, '0.0.0.0', () => {
     console.log(`🚀 Servidor rodando na porta ${PORT}`);
 });
+
