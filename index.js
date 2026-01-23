@@ -54,32 +54,34 @@ app.post('/criar-pix', async (req, res) => {
                 payment_method: "pix",
                 pix: { expires_in: 3600 }
             }],
-            metadata: {
-                id_usuario: clienteTelefone // Usado pelo Webhook para dar o saldo
-            }
-        };
+            // NA ROTA /criar-pix, altere o campo metadata:
+metadata: {
+    id_usuario: req.body.userUID // Mude de clienteTelefone para o UID real enviado pelo site
+}
 
-        const response = await axios.post('https://api.pagar.me/core/v5/orders', data, {
-            auth: { username: PAGARME_SECRET_KEY, password: '' }
-        });
+// NA ROTA /webhook, ajuste para garantir a atualização:
+app.post('/webhook', async (req, res) => {
+    const event = req.body;
+    
+    // O Pagar.me v5 usa 'order.paid'
+    if (event.type === 'order.paid') {
+        const uidUsuario = event.data.metadata.id_usuario;
+        const valorReal = event.data.amount / 100;
 
-        const charge = response.data.charges ? response.data.charges[0] : null;
-        const transaction = charge ? charge.last_transaction : null;
-
-        if (transaction && transaction.qr_code_url) {
-            res.json({ 
-                qrcode: transaction.qr_code_url, 
-                copyPaste: transaction.qr_code 
+        try {
+            const userRef = db.collection('usuarios').doc(uidUsuario);
+            
+            // Usamos o FieldValue para incrementar com segurança total
+            await userRef.update({
+                saldo: admin.firestore.FieldValue.increment(valorReal)
             });
-        } else {
-            console.error("Erro Pagar.me:", JSON.stringify(response.data));
-            res.status(400).json({ error: "Pagar.me não gerou o QR Code" });
+            
+            console.log(`✅ SUCESSO: R$ ${valorReal} creditados ao UID: ${uidUsuario}`);
+        } catch (err) {
+            console.error("❌ Erro ao atualizar saldo no Firebase:", err);
         }
-
-    } catch (error) {
-        console.error("ERRO NO SERVIDOR:", error.response ? JSON.stringify(error.response.data) : error.message);
-        res.status(500).json({ error: "Erro interno ao processar PIX" });
     }
+    res.status(200).send('OK');
 });
 
 // 2. ROTA DE WEBHOOK
@@ -107,3 +109,4 @@ const PORT = process.env.PORT || 10000;
 app.listen(PORT, '0.0.0.0', () => {
     console.log(`Servidor ON na porta ${PORT}`);
 });
+
