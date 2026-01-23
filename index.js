@@ -7,20 +7,25 @@ const app = express();
 app.use(express.json());
 app.use(cors({ origin: '*' }));
 
-// 1. CONFIGURAÇÃO DO FIREBASE
+// CONFIGURAÇÃO DO FIREBASE (VERSÃO SEGURA)
 try {
-    const serviceAccount = require("./firebase-adminsdk.json"); 
     if (!admin.apps.length) {
+        // Se você não conseguir subir o arquivo .json, usaremos variáveis de ambiente
+        const serviceAccount = process.env.FIREBASE_KEY 
+            ? JSON.parse(process.env.FIREBASE_KEY) 
+            : require("./firebase-adminsdk.json");
+
         admin.initializeApp({
             credential: admin.credential.cert(serviceAccount)
         });
-        console.log("✅ Firebase autenticado com sucesso!");
+        console.log("✅ Firebase conectado com sucesso!");
     }
 } catch (error) {
-    console.error("❌ ERRO CRÍTICO NAS CREDENCIAIS DO FIREBASE:", error.message);
+    console.error("❌ Erro ao iniciar Firebase:", error.message);
 }
 
 const db = admin.firestore();
+// ... resto do seu código (rotas /criar-pix e /webhook)
 const PAGARME_SECRET_KEY = 'sk_91d5411c659a4b0295e81b3e53e591a1';
 
 // ROTA PARA CRIAR O PIX
@@ -119,6 +124,7 @@ const PORT = process.env.PORT || 10000;
 app.listen(PORT, '0.0.0.0', () => {
     console.log(`🚀 Servidor rodando na porta ${PORT}`);
 });
+
 
 
 
