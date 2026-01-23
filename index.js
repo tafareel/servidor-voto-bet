@@ -7,16 +7,18 @@ const app = express();
 app.use(express.json());
 app.use(cors({ origin: '*' }));
 
-// CONFIGURAÇÃO DO FIREBASE (VERSÃO SEGURA)
+// 1. CONFIGURAÇÃO DO FIREBASE (VERSÃO BLINDADA)
 try {
     if (!admin.apps.length) {
-        // Se você não conseguir subir o arquivo .json, usaremos variáveis de ambiente
+        // Tenta ler da variável de ambiente FIREBASE_KEY do Render
+        // Se não existir, tenta ler o arquivo físico
         const serviceAccount = process.env.FIREBASE_KEY 
             ? JSON.parse(process.env.FIREBASE_KEY) 
             : require("./firebase-adminsdk.json");
 
         admin.initializeApp({
-            credential: admin.credential.cert(serviceAccount)
+            credential: admin.credential.cert(serviceAccount),
+            projectId: serviceAccount.project_id // Essencial para resolver o Code 16
         });
         console.log("✅ Firebase conectado com sucesso!");
     }
@@ -25,10 +27,9 @@ try {
 }
 
 const db = admin.firestore();
-// ... resto do seu código (rotas /criar-pix e /webhook)
 const PAGARME_SECRET_KEY = 'sk_91d5411c659a4b0295e81b3e53e591a1';
 
-// ROTA PARA CRIAR O PIX
+// 2. ROTA PARA CRIAR O PIX
 app.post('/criar-pix', async (req, res) => {
     try {
         const { valor, clienteNome, clienteTelefone, clienteCPF, userUID } = req.body;
@@ -72,13 +73,11 @@ app.post('/criar-pix', async (req, res) => {
             auth: { username: PAGARME_SECRET_KEY, password: '' }
         });
 
-        // --- CORREÇÃO DO ERRO '0' AQUI ---
-        // Verificamos se a resposta veio no formato de 'charges' ou 'payments'
+        // Lógica segura para capturar o QR Code (suporta Charges e Payments)
         let pixData = null;
-
-        if (response.data.charges && response.data.charges[0].last_transaction) {
+        if (response.data.charges && response.data.charges[0]?.last_transaction) {
             pixData = response.data.charges[0].last_transaction;
-        } else if (response.data.payments && response.data.payments[0].pix) {
+        } else if (response.data.payments && response.data.payments[0]?.pix) {
             pixData = response.data.payments[0].pix;
         }
 
@@ -88,35 +87,43 @@ app.post('/criar-pix', async (req, res) => {
                 copyPaste: pixData.qr_code 
             });
         } else {
-            console.error("Resposta inesperada do Pagar.me:", JSON.stringify(response.data));
             throw new Error("Pagar.me não retornou os dados do PIX.");
         }
 
     } catch (error) {
-        // Log detalhado para você ver no Render o que o Pagar.me rejeitou
         const erroDetalhado = error.response ? JSON.stringify(error.response.data) : error.message;
         console.error("ERRO NO SERVIDOR:", erroDetalhado);
         res.status(500).json({ error: "Erro interno ao processar PIX", detalhes: erroDetalhado });
     }
 });
-// 2. ROTA DE WEBHOOK
+
+// 3. ROTA DE WEBHOOK (POSTBACK)
 app.post('/webhook', async (req, res) => {
     const event = req.body;
     
+    // O Pagar.me envia 'order.paid' quando o pagamento é confirmado
     if (event.type === 'order.paid') {
         const uidUsuario = event.data.metadata.id_usuario;
         const valorReal = event.data.amount / 100;
         
+        console.log(`Recebido pagamento de R$ ${valorReal} para o UID: ${uidUsuario}`);
+
         try {
             const userRef = db.collection('usuarios').doc(uidUsuario);
+            
+            // Incrementa o saldo de forma atómica no Firestore
             await userRef.update({
                 saldo: admin.firestore.FieldValue.increment(valorReal)
             });
-            console.log(`✅ SALDO CREDITADO: R$ ${valorReal} para UID: ${uidUsuario}`);
+
+            console.log(`✅ SALDO CREDITADO COM SUCESSO: R$ ${valorReal} para UID: ${uidUsuario}`);
         } catch (err) {
-            console.error("Erro ao atualizar saldo no Webhook:", err);
+            console.error("❌ Erro fatal ao atualizar saldo no Firebase:", err.message);
+            // Se der erro 16 aqui, revisa as permissões IAM no Google Cloud
         }
     }
+    
+    // Responde sempre 200 para o Pagar.me não reenviar o mesmo evento infinitamente
     res.status(200).send('OK');
 });
 
@@ -124,7 +131,3 @@ const PORT = process.env.PORT || 10000;
 app.listen(PORT, '0.0.0.0', () => {
     console.log(`🚀 Servidor rodando na porta ${PORT}`);
 });
-
-
-
-
