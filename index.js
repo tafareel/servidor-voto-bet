@@ -8,56 +8,58 @@ app.use(express.json());
 app.use(cors({ origin: '*' }));
 
 // 1. CONFIGURAÇÃO DO FIREBASE
-const serviceAccount = require("./firebase-adminsdk.json"); 
-
-if (!admin.apps.length) {
-    admin.initializeApp({
-        credential: admin.credential.cert(serviceAccount)
-    });
+// Certifique-se de que o arquivo firebase-adminsdk.json está na mesma pasta no GitHub
+try {
+    const serviceAccount = require("./firebase-adminsdk.json"); 
+    if (!admin.apps.length) {
+        admin.initializeApp({
+            credential: admin.credential.cert(serviceAccount)
+        });
+    }
+} catch (e) {
+    console.error("ERRO CRÍTICO: Arquivo firebase-adminsdk.json não encontrado!");
 }
-const db = admin.firestore();
 
+const db = admin.firestore();
 const PAGARME_SECRET_KEY = 'sk_91d5411c659a4b0295e81b3e53e591a1';
 
 // ROTA PARA CRIAR O PIX
 app.post('/criar-pix', async (req, res) => {
     try {
         const { valor, clienteNome, clienteTelefone, clienteCPF, userUID } = req.body;
-        const amountInCents = Math.round(parseFloat(valor) * 100);
+        
+        if (!userUID) return res.status(400).json({ error: "userUID é obrigatório" });
 
+        const amountInCents = Math.round(parseFloat(valor) * 100);
         const cpfLimpo = clienteCPF.replace(/\D/g, "");
         const telLimpo = clienteTelefone.replace(/\D/g, "");
-
-        console.log(`Gerando PIX para: ${clienteNome} | UID: ${userUID} | Valor: R$ ${valor}`);
 
         const data = {
             items: [{
                 amount: amountInCents,
-                description: "Depósito Voto Bet",
+                description: "Deposito Voto Bet",
                 quantity: 1,
-                code: "deposito_01"
+                code: "deposito_pix"
             }],
             customer: {
-                name: clienteNome,
-                email: "cliente@votobet.com", // Opcional: pode vir do body também
+                name: clienteNome || "Cliente VotoBet",
+                email: "cliente@voto.bet",
                 type: "individual",
-                document: cpfLimpo,
+                document: cpfLimpo, 
                 phones: {
                     mobile_phone: {
                         country_code: "55",
-                        area_code: telLimpo.substring(0, 2),
-                        number: telLimpo.substring(2)
+                        area_code: telLimpo.substring(0, 2) || "11",
+                        number: telLimpo.substring(2) || "999999999"
                     }
                 }
             },
             payments: [{
                 payment_method: "pix",
-                pix: {
-                    expires_in: 3600
-                }
+                pix: { expires_in: 3600 }
             }],
             metadata: {
-                id_usuario: userUID // CRUCIAL: Vincula o pagamento ao UID do Firebase
+                id_usuario: userUID // Agora usamos o UID real para o saldo
             }
         };
 
@@ -65,61 +67,46 @@ app.post('/criar-pix', async (req, res) => {
             auth: { username: PAGARME_SECRET_KEY, password: '' }
         });
 
-        const transaction = response.data.checkouts ? response.data.checkouts[0] : response.data.payments[0].pix;
+        // Ajuste na leitura da resposta v5
+        const pixData = response.data.payments[0].pix;
 
-        if (transaction.qr_code_url || response.data.payments[0].pix.qr_code_url) {
-            const pixData = response.data.payments[0].pix;
+        if (pixData && pixData.qr_code) {
             res.json({ 
                 qrcode: pixData.qr_code_url, 
                 copyPaste: pixData.qr_code 
             });
         } else {
-            res.status(400).json({ error: "Pagar.me não gerou o QR Code" });
+            throw new Error("Pagar.me não retornou dados do PIX");
         }
 
     } catch (error) {
         console.error("ERRO NO SERVIDOR:", error.response ? JSON.stringify(error.response.data) : error.message);
         res.status(500).json({ error: "Erro interno ao processar PIX" });
     }
-}); // <--- Chave de fecho da rota /criar-pix corrigida
+});
 
-// 2. ROTA DE WEBHOOK (POSTBACK)
+// 2. ROTA DE WEBHOOK
 app.post('/webhook', async (req, res) => {
     const event = req.body;
-    console.log("Evento recebido do Pagar.me:", event.type);
-
-    // O Pagar.me v5 envia 'order.paid' quando o Pix é confirmado
+    
     if (event.type === 'order.paid') {
         const uidUsuario = event.data.metadata.id_usuario;
         const valorReal = event.data.amount / 100;
-
+        
         try {
-            if (!uidUsuario) {
-                console.error("❌ Erro: Webhook recebido sem id_usuario no metadata");
-                return res.status(400).send('Metadata ausente');
-            }
-
             const userRef = db.collection('usuarios').doc(uidUsuario);
-            
-            // Incrementa o saldo diretamente no Firebase (mais seguro)
             await userRef.update({
                 saldo: admin.firestore.FieldValue.increment(valorReal)
             });
-
-            console.log(`✅ SALDO ATUALIZADO: R$ ${valorReal} para o UID: ${uidUsuario}`);
-            return res.status(200).send('Saldo Creditado');
-            
+            console.log(`✅ SALDO CREDITADO: R$ ${valorReal} para UID: ${uidUsuario}`);
         } catch (err) {
-            console.error("❌ Erro ao atualizar Firebase no Webhook:", err);
-            return res.status(500).send('Erro interno');
+            console.error("Erro ao atualizar saldo no Webhook:", err);
         }
     }
-
-    // Responde 200 para qualquer outro evento para o Pagar.me não ficar reenviando
-    res.status(200).send('Evento ignorado');
+    res.status(200).send('OK');
 });
 
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
+const PORT = process.env.PORT || 10000;
+app.listen(PORT, '0.0.0.0', () => {
     console.log(`🚀 Servidor rodando na porta ${PORT}`);
 });
